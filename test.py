@@ -1,139 +1,180 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Fri Dec 18 10:31:52 2020
-@author: Irandokht
-"""
 
+import imp
 import numpy as np
-np.random.seed(1000)
-import pandas as pd
-import random
-random.seed(1000)
-import warnings
-warnings.filterwarnings('ignore')
-import time
-from docplex.mp.model import Model
-##############################################################################
-'''
-This dataset corresponds to our small-scale dataset with 6 nodes including depot
-and 5 customers/nodes in which distance between customer i and j is asymmetric.
-We use the CPLEX optimization solver, the academic version, to solve this problem.
-'''
-##############################################################################
-# function that solves VRPB
-def CVRPB():
+# Utility functions to initialize the problem
+from odp.Grid import Grid
+from odp.Shapes import *
 
-    mdl = Model('CVRPB')
+# Specify the  file that includes dynamic systems
+from odp.dynamics import DubinsCapture
+from odp.dynamics import DubinsCar4D2
+# Plot options
+from odp.Plots import PlotOptions
+# Solver core
+from odp.solver import HJSolver, computeSpatDerivArray
 
-    # linhaul decision Variables
-    x = mdl.binary_var_dict (A_L,name='x')
-    u = mdl.continuous_var_dict (L, name = 'u')
-    
-    #bakchaul decision variables
-    y = mdl.binary_var_dict (A_B,name='y')
-    w = mdl.continuous_var_dict (B,name = 'w')
-    
-    #connection decision variables
-    z = mdl.binary_var_dict (A_C,name='z')
-    #####################################
-    ##### linhaul constraints
-    #truck constraint
-    mdl.add_constraint(mdl.sum(x[0,j]for j in L)==k )
-    #degree constraints
-    mdl.add_constraints(mdl.sum(x[i,j]for i in L_0 if i!=j)==1 for j in L )     
-    #truck capacity 
-    mdl.add_constraints(u[i]-u[j]+Q*x[i,j]<= Q-d_L[j] for i,j in A_L if i!=0 and j!=0)
-        
-    ##### bakchaul constraints
-    #truck constraints
-    mdl.add_constraint(mdl.sum(y[i,0]for i in B)+mdl.sum(z[i,0] for i in L)==k )
-    #mdl.add_constraint(mdl.sum(y[i,0]for i in B)<=k )
-    #degree constraints
-    mdl.add_constraints(mdl.sum(y[i,j]for j in B_0 if j!=i)==1 for i in B)    
-    #truck capacity
-    mdl.add_constraints(w[i]-w[j]+Q*y[i,j]<=Q-d_B[j] for i,j in A_B if i!=0 and j!=0)
-           
-    ####### connection constraints
-    #truck constraints
-    mdl.add_constraint(mdl.sum(z[i,j]for i,j in A_C )==k)
-    #degree constraints
-    mdl.add_constraints(mdl.sum(x[i,j] for j in L if j!=i )+ mdl.sum(z[i,j] for j in B_0 )==1 for i in L)
-    mdl.add_constraints(mdl.sum(y[i,j] for i in B if i!=j )+ mdl.sum(z[i,j] for i in L )==1 for j in B)
-    ###################################
-    ####objective functions
-    obj_Linhaul = mdl.sum(c[i,j]*x[i,j]for i,j in A_L)
-    mdl.add_kpi(obj_Linhaul, 'Linehaul Cost')
-    
-    obj_Backhaul = mdl.sum(c[i,j]*y[i,j]for i,j in A_B)
-    mdl.add_kpi(obj_Backhaul, 'Backhaul Cost')
-    
-    obj_Connection = mdl.sum(c[i,j]*z[i,j]for i,j in A_C)
-    mdl.add_kpi(obj_Connection, 'Connection Cost')
-    
-    objective = obj_Linhaul+obj_Backhaul+obj_Connection
-    mdl.add_kpi(objective, 'Total Cost')
-    #######################################
-    #solving model
-    mdl.minimize(objective)
-    #mdl.parameters.timelimit=5 
-    solution =mdl.solve(log_output=False) #true if you need to see the steps of slover
-    #mdl.report_kpis()
-    if not solution:
-        print('fail in solving, there is no feasible solution')
-    #mdl.export_as_lp()
-    ########################################
-    #Collect optimal solution
-    x_opt=[a for a in A_L if x[a].solution_value> 0.9]
-    y_opt=[a for a in A_B if y[a].solution_value> 0.9]
-    z_opt=[a for a in A_C if z[a].solution_value> 0.9]
-    obj_opt=round(solution.objective_value,2)
-    
-    return obj_opt, x_opt, y_opt, z_opt
-##############################################################################
-global V, L, L_0, B, B_0
-global A, A_L, A_B, A_C
-global c
-global d_L, d_B
-global Q, k
+import math
 
-#### step 1: preparing data
-# vehicles capacity and number of available vehicles at the depot
-Q = 2
-k = 2
+""" USER INTERFACES
+- Define grid
+- Generate initial values for grid using shape functions
+- Time length for computations
+- Initialize plotting option
+- Call HJSolver function
+"""
 
-# all nodes, where 0 states the depot. all links and symetric distance matrix
-V = [0, 1, 2, 3, 4, 5]
-A = [(i,j) for i in V for j in V]
-c = {(0,0):float('inf'),   (0,1):2,               (0,2):2.83,            (0,3):2,              (0,4):1.12,           (0,5):1.80,
-     (1,0):1,              (1,1):float('inf'),    (1,2):2,               (1,3):2.83,           (1,4):1.12,           (1,5):1.80,
-     (2,0):1,              (2,1):5,               (2,2):float('inf'),    (2,3):2,              (2,4):1.80,           (2,5):1.12,
-     (3,0):2,              (3,1):1,               (3,2):5,               (3,3):float('inf'),   (3,4):1.80,           (3,5):1.12,
-     (4,0):1,              (4,1):1.12,            (4,2):1.80,            (4,3):1.80,           (4,4):float('inf'),   (4,5):1,
-     (5,0):5,              (5,1):1.80,            (5,2):1.12,            (5,3):1.12,           (5,4):1,              (5,5):float('inf')}
+##################################################### EXAMPLE 1 #####################################################
 
-# all nodes and links related to linehaul customers
-L = [1, 2, 3]
-L_0 = [0] +L
-d_L = {1:1, 2:1, 3:1}
-A_L = [(i,j) for i in L_0 for j in L if i!=j]
+g = Grid(np.array([-4.0, -4.0, -math.pi]), np.array([4.0, 4.0, math.pi]), 3, np.array([40, 40, 40]), [2])
 
-# all nodes and links related to backhaul customers
-B = [4, 5]
-B_0 = B + [0]
-d_B = {4:1, 5:1}
-A_B = [(i,j) for i in B for j in B_0 if i!=j]
+# Implicit function is a spherical shape - check out CylinderShape API
+Initial_value_f = CylinderShape(g, [], np.zeros(3), 1)
 
-# all links related to connecting linehaul routes to backhaul routes or to the depot
-A_C= [(i,j) for i in L for j in B_0]
+# Look-back length and time step of computation
+lookback_length = 2.0
+t_step = 0.05
 
-#### step 2:  solve the problem
-start = time.clock()
-obj_opt, x_opt, y_opt, z_opt = CVRPB()
-stop = time.clock()
-CPU_running_time = round(stop - start,2)
+small_number = 1e-5
+tau = np.arange(start=0, stop=lookback_length + small_number, step=t_step)
 
-#### step 3:  print the solution
-print ('The solution for VRPB with asymmetric distance for small-scale dataset is:',
-       '\nObjective value = ', obj_opt, '\nCPU running time in second = ', CPU_running_time)
+# Specify the dynamical object. DubinsCapture() has been declared in dynamics/
+# Control uMode is maximizing, meaning that we're avoiding the initial target set
+my_car = DubinsCapture(uMode="max", dMode="min")
 
-print('\n the route sequence is', '\nlinehau = ', x_opt, '\nconnection = ', z_opt, '\nbaclhaul = ', y_opt )
+# Specify how to plot the isosurface of the value function ( for higher-than-3-dimension arrays, which slices, indices
+# we should plot if we plot at all )
+po2 = PlotOptions(do_plot=True, plot_type="3d_plot", plotDims=[0,1,2],
+                  slicesCut=[])
+
+"""
+Assign one of the following strings to `TargetSetMode` to specify the characteristics of computation
+"TargetSetMode":
+{
+"none" -> compute Backward Reachable Set,
+"minVWithV0" -> min V with V0 (compute Backward Reachable Tube),
+"maxVWithV0" -> max V with V0,
+"maxVWithVInit" -> compute max V over time,
+"minVWithVInit" -> compute min V over time,
+"minVWithVTarget" -> min V with target set (if target set is different from initial V0)
+"maxVWithVTarget" -> max V with target set (if target set is different from initial V0)
+}
+(optional)
+Please specify this mode if you would like to add another target set, which can be an obstacle set
+for solving a reach-avoid problem
+"ObstacleSetMode":
+{
+"minVWithObstacle" -> min with obstacle set,
+"maxVWithObstacle" -> max with obstacle set
+}
+"""
+
+# In this example, we compute a Backward Reachable Tube
+compMethods = { "TargetSetMode": "minVWithV0"}
+# HJSolver(dynamics object, grid, initial value function, time length, system objectives, plotting options)
+result = HJSolver(my_car, g, Initial_value_f, tau, compMethods, po2, saveAllTimeSteps=True )
+
+last_time_step_result = result[..., 0]
+# Compute spatial derivatives at every state
+x_derivative = computeSpatDerivArray(g, last_time_step_result, deriv_dim=1, accuracy="low")
+y_derivative = computeSpatDerivArray(g, last_time_step_result, deriv_dim=2, accuracy="low")
+T_derivative = computeSpatDerivArray(g, last_time_step_result, deriv_dim=3, accuracy="low")
+
+# Let's compute optimal control at some random idices
+spat_deriv_vector = (x_derivative[10,20,30], y_derivative[10,20,30], T_derivative[10,20,30])
+state_vector = (g.grid_points[0][10], g.grid_points[1][20], g.grid_points[2][30])
+
+# Compute the optimal control
+opt_ctrl = my_car.optCtrl_inPython(state_vector, spat_deriv_vector)
+print("Optimal control is {}\n".format(opt_ctrl))
+
+##################################################### EXAMPLE 2 #####################################################
+
+g = Grid(np.array([-3.0, -1.0, 0.0, -math.pi]), np.array([3.0, 4.0, 4.0, math.pi]), 4, np.array([60, 60, 20, 36]), [3])
+
+# Define my object
+my_car = DubinsCar4D2()
+
+# Use the grid to initialize initial value function
+Initial_value_f = CylinderShape(g, [2,3], np.zeros(4), 1)
+
+# Look-back length and time step
+lookback_length = 1.0
+t_step = 0.05
+
+small_number = 1e-5
+
+tau = np.arange(start=0, stop=lookback_length + small_number, step=t_step)
+
+po = PlotOptions(do_plot=True, plot_type="3d_plot", plotDims=[0,1,3],
+                  slicesCut=[19])
+
+# In this example, we compute a Backward Reachable Tube
+compMethods = { "TargetSetMode": "minVWithV0"}
+result = HJSolver(my_car, g, Initial_value_f, tau, compMethods, po, saveAllTimeSteps=True)
+
+last_time_step_result = result[..., 0]
+
+# Compute spatial derivatives at every state
+x_derivative = computeSpatDerivArray(g, last_time_step_result, deriv_dim=1, accuracy="low")
+y_derivative = computeSpatDerivArray(g, last_time_step_result, deriv_dim=2, accuracy="low")
+v_derivative = computeSpatDerivArray(g, last_time_step_result, deriv_dim=3, accuracy="low")
+T_derivative = computeSpatDerivArray(g, last_time_step_result, deriv_dim=4, accuracy="low")
+
+# Let's compute optimal control at some random idices
+spat_deriv_vector = (x_derivative[10,20,15,15], y_derivative[10,20,15,15],
+                     v_derivative[10,20,15,15], T_derivative[10,20,15,15])
+
+# Compute the optimal control
+opt_a, opt_w = my_car.optCtrl_inPython(spat_deriv_vector)
+print("Optimal accel is {}\n".format(opt_a))
+print("Optimal rotation is {}\n".format(opt_w))
+
+##################################################### EXAMPLE 3 #####################################################
+
+# Third scenario with Reach-Avoid set
+g = Grid(np.array([-4.0, -4.0, -math.pi]), np.array([4.0, 4.0, math.pi]), 3, np.array([40, 40, 40]), [2])
+
+# Reachable set
+goal = CylinderShape(g, [2], np.zeros(3), 0.5)
+
+# Avoid set
+obstacle = CylinderShape(g, [2], np.array([1.0, 1.0, 0.0]), 0.5)
+
+# Look-back length and time step
+lookback_length = 1.5
+t_step = 0.05
+
+small_number = 1e-5
+tau = np.arange(start=0, stop=lookback_length + small_number, step=t_step)
+
+my_car = DubinsCapture(uMode="min", dMode="max")
+
+po2 = PlotOptions(do_plot=True, plot_type="3d_plot", plotDims=[0,1,2],
+                  slicesCut=[])
+
+"""
+Assign one of the following strings to `TargetSetMode` to specify the characteristics of computation
+"TargetSetMode":
+{
+"none" -> compute Backward Reachable Set,
+"minVWithV0" -> min V with V0 (compute Backward Reachable Tube),
+"maxVWithV0" -> max V with V0,
+"maxVWithVInit" -> compute max V over time,
+"minVWithVInit" -> compute min V over time,
+"minVWithVTarget" -> min V with target set (if target set is different from initial V0)
+"maxVWithVTarget" -> max V with target set (if target set is different from initial V0)
+}
+(optional)
+Please specify this mode if you would like to add another target set, which can be an obstacle set
+for solving a reach-avoid problem
+"ObstacleSetMode":
+{
+"minVWithObstacle" -> min with obstacle set,
+"maxVWithObstacle" -> max with obstacle set
+}
+"""
+
+compMethods = { "TargetSetMode": "minVWithVTarget",
+                "ObstacleSetMode": "maxVWithObstacle"}
+# HJSolver(dynamics object, grid, initial value function, time length, system objectives, plotting options)
+result = HJSolver(my_car, g, [goal, obstacle], tau, compMethods, po2, saveAllTimeSteps=True )
