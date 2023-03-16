@@ -19,3 +19,8 @@ Output:
 ![2](https://user-images.githubusercontent.com/124194684/225578641-d2b524dd-daca-419e-9251-2974f276c7e5.png)
 
 Errors:
+
+The argument name "x" doesn't conform to the snake_case naming style, 
+The name "arr" is being redefined from the outer scope in line 31, 
+The name "x" is being redefined from the outer scope in line 32, 
+The constant name "x" doesn't conform to the UPPER_CASE naming style.
