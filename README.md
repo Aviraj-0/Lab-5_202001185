@@ -10,4 +10,4 @@ Output:
 
 Output:
 
-![2](https://user-images.githubusercontent.com/124194684/225576993-22aeb8fd-23b6-48ad-bf19-90783d35fdb5.png)
+![2](https://user-images.githubusercontent.com/124194684/225578641-d2b524dd-daca-419e-9251-2974f276c7e5.png)
