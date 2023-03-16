@@ -1,5 +1,5 @@
 # Lab-5_202001185
-* 1. Static Analysis
+*1. Static Analysis
 * https://github.com/Aviraj-0/Lab-5_202001185/blob/main/test.py
 * Output:
 
